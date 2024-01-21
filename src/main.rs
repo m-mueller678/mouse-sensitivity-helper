@@ -41,11 +41,30 @@ struct MouseData {
     abs_motion:f64,
 }
 
+#[derive(Eq,PartialEq)]
+enum KeyBindState{
+    Unbound,Binding,Bound(u32,bool),
+}
+
+impl KeyBindState{
+    fn poll_triggered(&mut self)->bool{
+        match self{
+            KeyBindState::Bound(_,x)=>{
+                let v=*x;
+                *x=false;
+                v
+            }
+            _=>false,
+        }
+    }
+}
+
 struct MyEguiApp {
     mouse_states:HashMap<Device, MouseData>,
-    keys:Vec<u32>,
     active_mouse:Option<Device>,
     lib_input:Libinput,
+    key_reset_x:KeyBindState,
+    key_map:HashMap<u32,egui::Key>,
 }
 
 impl MyEguiApp {
@@ -55,8 +74,9 @@ impl MyEguiApp {
         MyEguiApp{
             mouse_states:HashMap::new(),
             lib_input:input,
-            keys:Vec::new(),
             active_mouse:None,
+            key_reset_x:KeyBindState::Unbound,
+            key_map:HashMap::new(),
         }
     }
 
@@ -73,7 +93,7 @@ impl eframe::App for MyEguiApp {
     fn update(&mut self, ctx: &egui::Context, frame: &mut eframe::Frame){
         ctx.request_repaint();
         self.lib_input.dispatch().unwrap();
-        for event in &mut self.lib_input {
+        'next_event: for event in &mut self.lib_input {
             match &event{
                 Event::Pointer(PointerEvent::Motion(e))=>{
                     let s=self.mouse_states.entry(e.device()).or_default();
@@ -82,8 +102,21 @@ impl eframe::App for MyEguiApp {
                 }
                 Event::Keyboard(e)=>{
                     if e.key_state() == KeyState::Pressed{
-                        dbg!(e.key());
-                        self.keys.push(e.key());
+                        for k in [&mut self.key_reset_x]{
+                            match *k{
+                                KeyBindState::Binding=>{
+                                    *k=KeyBindState::Bound(e.key(),false);
+                                    continue 'next_event
+                                }
+                                _=>()
+                            }
+                            match k{
+                                KeyBindState::Bound(b,p) if *b==e.key() =>{
+                                    *p=true;
+                                }
+                                _=>()
+                            }
+                        }
                     }
                 }
                 _=>{},
@@ -107,6 +140,25 @@ impl eframe::App for MyEguiApp {
                 ui.label(format!("{}",state.x_motion));
                 ui.label("abs motion");
                 ui.label(format!("{}",state.abs_motion));
+
+                ui.horizontal(|ui|{
+                    ui.label("reset x");
+                    match self.key_reset_x{
+                        KeyBindState::Binding=>if ui.button("cancel").clicked(){
+                            self.key_reset_x = KeyBindState::Unbound
+                        }
+                        KeyBindState::Bound(k,_)=>if ui.button(format!("key {k}")).clicked(){
+                            self.key_reset_x = KeyBindState::Binding
+                        }
+                        KeyBindState::Unbound=>if ui.button("bind").clicked(){
+                            self.key_reset_x = KeyBindState::Binding
+                        }
+                    }
+                });
+
+                if self.key_reset_x.poll_triggered(){
+                    state.x_motion=0.0;
+                }
             }
         });
     }
