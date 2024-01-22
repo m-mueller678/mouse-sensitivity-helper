@@ -28,7 +28,7 @@ impl LibinputInterface for Interface {
 }
 
 use eframe::egui;
-use egui::Ui;
+use egui::{DragValue, Ui, Widget};
 
 fn main() {
     let native_options = eframe::NativeOptions::default();
@@ -63,6 +63,7 @@ impl KeyBindState {
 #[derive(Eq, PartialEq)]
 enum AppTab {
     Basic,
+    Record,
 }
 
 struct MyEguiApp {
@@ -70,11 +71,21 @@ struct MyEguiApp {
     active_mouse: Option<Device>,
     lib_input: Libinput,
     active_tab: AppTab,
-
-    key_reset_x: KeyBindState,
-    key_reset_abs: KeyBindState,
+    configured_dpi: f64,
     x_motion: f64,
     abs_motion: f64,
+
+    //basic
+    key_reset_x: KeyBindState,
+    key_reset_abs: KeyBindState,
+    x_motion_base: f64,
+    abs_motion_base: f64,
+
+    //record
+    key_record_toggle: KeyBindState,
+    record_value: f64,
+    recording: bool,
+    record_revolutions: usize,
 }
 
 impl MyEguiApp {
@@ -86,11 +97,19 @@ impl MyEguiApp {
             lib_input: input,
             active_mouse: None,
             active_tab: AppTab::Basic,
+            configured_dpi: 0.0,
+            abs_motion: 0.0,
+            x_motion: 0.0,
 
             key_reset_x: KeyBindState::Unbound,
             key_reset_abs: KeyBindState::Unbound,
-            x_motion: 0.0,
-            abs_motion: 0.0,
+            x_motion_base: 0.0,
+            abs_motion_base: 0.0,
+
+            key_record_toggle: KeyBindState::Unbound,
+            record_value: 0.0,
+            recording: false,
+            record_revolutions: 0,
         }
     }
 
@@ -127,22 +146,58 @@ impl MyEguiApp {
         .inner
     }
 
-    fn basic_tab(&mut self, ui: &mut Ui) {
+    fn tab_basic(&mut self, ui: &mut Ui) {
         ui.horizontal(|ui| {
             ui.label("x motion");
-            ui.label(format!("{}", self.x_motion));
+            ui.label(format!("{}", self.x_motion - self.x_motion_base));
             if Self::key_bind_button(ui, "reset", &mut self.key_reset_x) {
-                self.x_motion = 0.0;
+                self.x_motion_base = self.x_motion;
             }
         });
 
         ui.horizontal(|ui| {
             ui.label("abs motion");
-            ui.label(format!("{}", self.abs_motion));
+            ui.label(format!("{}", self.abs_motion - self.abs_motion_base));
             if Self::key_bind_button(ui, "reset", &mut self.key_reset_abs) {
-                self.abs_motion = 0.0;
+                self.abs_motion_base = self.abs_motion_base;
             }
         });
+    }
+
+    fn tab_record(&mut self, ui: &mut Ui) {
+        ui.horizontal(|ui| {
+            ui.label("number of revolutions");
+            DragValue::new(&mut self.record_revolutions)
+                .speed(0.05)
+                .ui(ui);
+        });
+        if Self::key_bind_button(
+            ui,
+            if self.recording { "start" } else { "stop" },
+            &mut self.key_record_toggle,
+        ) {
+            if self.recording {
+                self.record_value = self.x_motion - self.record_value
+            } else {
+                self.record_value = self.x_motion;
+            }
+            self.recording = !self.recording;
+        }
+        let dots = if self.recording {
+            self.x_motion - self.record_value
+        } else {
+            self.record_value
+        };
+        let inch = dots / self.configured_dpi;
+        ui.label(format!("total motion: {:.5}", dots));
+        ui.label(format!(
+            "revolutions per dot {:5}",
+            self.record_revolutions as f64 / dots
+        ));
+        ui.label(format!(
+            "revolutions per inch {:5}",
+            self.record_revolutions as f64 / inch
+        ));
     }
 }
 
@@ -162,7 +217,11 @@ impl eframe::App for MyEguiApp {
                 }
                 Event::Keyboard(e) => {
                     if e.key_state() == KeyState::Pressed {
-                        for k in [&mut self.key_reset_x, &mut self.key_reset_abs] {
+                        for k in [
+                            &mut self.key_reset_x,
+                            &mut self.key_reset_abs,
+                            &mut self.key_record_toggle,
+                        ] {
                             if let KeyBindState::Binding = *k {
                                 *k = KeyBindState::Bound(e.key(), false);
                                 continue 'next_event;
@@ -183,23 +242,27 @@ impl eframe::App for MyEguiApp {
             if self.active_mouse.is_none() {
                 self.active_mouse = self.mouse_states.iter().next().cloned();
             }
-            egui::ComboBox::from_label("mouse")
-                .selected_text(Self::mouse_combo_box_string(self.active_mouse.as_ref()))
-                .show_ui(ui, |ui| {
-                    for dev in self.mouse_states.iter() {
-                        ui.selectable_value(
-                            &mut self.active_mouse,
-                            Some(dev.clone()),
-                            Self::mouse_combo_box_string(Some(dev)),
-                        );
-                    }
-                });
             ui.horizontal(|ui| {
+                egui::ComboBox::from_label("mouse")
+                    .selected_text(Self::mouse_combo_box_string(self.active_mouse.as_ref()))
+                    .show_ui(ui, |ui| {
+                        for dev in self.mouse_states.iter() {
+                            ui.selectable_value(
+                                &mut self.active_mouse,
+                                Some(dev.clone()),
+                                Self::mouse_combo_box_string(Some(dev)),
+                            );
+                        }
+                    });
+                ui.label("mouse dpi");
+                DragValue::new(&mut self.configured_dpi).speed(10.0).ui(ui);
                 ui.selectable_value(&mut self.active_tab, AppTab::Basic, "basic");
+                ui.selectable_value(&mut self.active_tab, AppTab::Record, "record");
             });
 
             match self.active_tab {
-                AppTab::Basic => self.basic_tab(ui),
+                AppTab::Basic => self.tab_basic(ui),
+                AppTab::Record => self.tab_record(ui),
             }
         });
     }
