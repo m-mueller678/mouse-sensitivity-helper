@@ -29,6 +29,7 @@ impl LibinputInterface for Interface {
 
 use eframe::egui;
 use egui::{Button, ComboBox, DragValue, Ui, Widget};
+use egui_extras::{Column, TableBody, TableBuilder};
 
 fn main() {
     let native_options = eframe::NativeOptions::default();
@@ -105,10 +106,43 @@ impl MyEguiApp {
         }
     }
 
-    fn input(ui: &mut Ui, label: &str, v: &mut f64, f: impl FnOnce(DragValue) -> DragValue) {
-        ui.horizontal(|ui| {
-            ui.label(label);
-            f(DragValue::new(v)).ui(ui);
+    fn input(
+        body: &mut TableBody,
+        label: &str,
+        v: &mut f64,
+        f: impl FnOnce(DragValue) -> DragValue,
+    ) {
+        body.row(30.0, |mut row| {
+            row.col(|ui| {
+                ui.label(label);
+            });
+            row.col(|ui| {
+                f(DragValue::new(v)).ui(ui);
+            });
+        });
+    }
+
+    fn show_value(body: &mut TableBody, name: &str, value: f64) {
+        body.row(30.0, |mut row| {
+            row.col(|ui| {
+                ui.label(name);
+            });
+            row.col(|ui| {
+                if value.is_nan() {
+                    ui.label("missing input");
+                } else {
+                    ui.label(format!("{:.3?}", value))
+                        .on_hover_text(format!("{:?}", value));
+                }
+            });
+            row.col(|ui| {
+                if ui
+                    .add_enabled(!value.is_nan(), Button::new("copy"))
+                    .clicked()
+                {
+                    ui.ctx().copy_text(format!("{:?}", value));
+                }
+            });
         });
     }
 
@@ -137,24 +171,6 @@ impl MyEguiApp {
         .inner
     }
 
-    fn show_value(ui: &mut Ui, name: &str, value: f64) {
-        ui.horizontal(|ui| {
-            ui.label(name);
-            if value.is_nan() {
-                ui.label("missing input");
-            } else {
-                ui.label(format!("{:.3?}", value))
-                    .on_hover_text(format!("{:?}", value));
-            }
-            if ui
-                .add_enabled(!value.is_nan(), Button::new("copy"))
-                .clicked()
-            {
-                ui.ctx().copy_text(format!("{:?}", value));
-            }
-        });
-    }
-
     fn tab_record(&mut self, ui: &mut Ui) {
         if MyEguiApp::key_bind_button(
             ui,
@@ -180,48 +196,88 @@ impl MyEguiApp {
         let rdp1 = rpd / self.current_sensitivity;
         let adjusted_sensitivity = self.current_sensitivity * (self.target_rpi / current_rpi);
         ui.group(|ui| {
-            ui.label("inputs");
-            Self::input(ui, "mouse dpi", &mut self.configured_dpi, |d| d.speed(10.0));
-            Self::input(
-                ui,
-                "current sensitivity",
-                &mut self.current_sensitivity,
-                |d| d.speed(0.02),
-            );
-            Self::input(ui, "number of revolutions", &mut self.revolutions, |d| {
-                d.speed(0.05).max_decimals(0)
-            });
-            Self::input(
-                ui,
-                "target revolutions per inch",
-                &mut self.target_rpi,
-                |d| d.speed(0.02),
-            );
-            ui.horizontal(|ui| {
-                ui.label("physical distance");
-                DragValue::new(&mut self.distance_moved).speed(0.02).ui(ui);
-                ComboBox::new("physical_distance_unit", "")
-                    .selected_text(if self.distnance_moved_is_inch {
-                        "inch"
-                    } else {
-                        "cm"
-                    })
-                    .show_ui(ui, |ui| {
-                        ui.selectable_value(&mut self.distnance_moved_is_inch, false, "cm");
-                        ui.selectable_value(&mut self.distnance_moved_is_inch, true, "inch");
-                    })
-            });
+            ui.heading("inputs");
+            TableBuilder::new(ui)
+                .column(Column::exact(200.0))
+                .column(Column::auto())
+                .body(|mut body| {
+                    Self::input(&mut body, "mouse dpi", &mut self.configured_dpi, |d| {
+                        d.speed(10.0)
+                    });
+                    Self::input(
+                        &mut body,
+                        "current sensitivity",
+                        &mut self.current_sensitivity,
+                        |d| d.speed(0.02),
+                    );
+                    Self::input(
+                        &mut body,
+                        "number of revolutions",
+                        &mut self.revolutions,
+                        |d| d.speed(0.05).max_decimals(0),
+                    );
+                    Self::input(
+                        &mut body,
+                        "target revolutions per inch",
+                        &mut self.target_rpi,
+                        |d| d.speed(0.02),
+                    );
+                    body.row(30.0, |mut row| {
+                        row.col(|ui| {
+                            ui.label("physical distance");
+                        });
+                        row.col(|ui| {
+                            ui.horizontal(|ui| {
+                                DragValue::new(&mut self.distance_moved).speed(0.02).ui(ui);
+                                ComboBox::new("physical_distance_unit", "")
+                                    .selected_text(if self.distnance_moved_is_inch {
+                                        "inch"
+                                    } else {
+                                        "cm"
+                                    })
+                                    .show_ui(ui, |ui| {
+                                        ui.selectable_value(
+                                            &mut self.distnance_moved_is_inch,
+                                            false,
+                                            "cm",
+                                        );
+                                        ui.selectable_value(
+                                            &mut self.distnance_moved_is_inch,
+                                            true,
+                                            "inch",
+                                        );
+                                    });
+                            });
+                        });
+                    });
+                });
         });
         ui.group(|ui| {
-            ui.label("outputs");
-            Self::show_value(ui, "horizontal motion", dots);
-            Self::show_value(ui, "absolute motion", self.abs_motion);
-            Self::show_value(ui, "revolutions per inch", current_rpi);
-            Self::show_value(ui, "revolutions per dot", rpd);
-            Self::show_value(ui, "revolutions per dot at sensitivity=1", rdp1);
-            Self::show_value(ui, "adjusted sensitivity", adjusted_sensitivity);
-            Self::show_value(ui, "sensitivity adjustment", self.target_rpi / current_rpi);
-            Self::show_value(ui, "computed dpi", self.abs_motion / physical_distance);
+            ui.push_id("outputs", |ui| {
+                ui.heading("outputs");
+                TableBuilder::new(ui)
+                    .column(Column::exact(200.0))
+                    .column(Column::auto())
+                    .column(Column::auto())
+                    .body(|mut body| {
+                        Self::show_value(&mut body, "horizontal motion", dots);
+                        Self::show_value(&mut body, "absolute motion", self.abs_motion);
+                        Self::show_value(&mut body, "revolutions per inch", current_rpi);
+                        Self::show_value(&mut body, "revolutions per dot", rpd);
+                        Self::show_value(&mut body, "revolutions per dot at sensitivity=1", rdp1);
+                        Self::show_value(&mut body, "adjusted sensitivity", adjusted_sensitivity);
+                        Self::show_value(
+                            &mut body,
+                            "sensitivity adjustment",
+                            self.target_rpi / current_rpi,
+                        );
+                        Self::show_value(
+                            &mut body,
+                            "computed dpi",
+                            self.abs_motion / physical_distance,
+                        );
+                    });
+            })
         });
     }
 }
