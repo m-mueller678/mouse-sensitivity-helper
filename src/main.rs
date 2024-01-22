@@ -158,7 +158,7 @@ impl MyEguiApp {
     fn tab_record(&mut self, ui: &mut Ui) {
         if MyEguiApp::key_bind_button(
             ui,
-            if self.recording { "start" } else { "stop" },
+            if self.recording { "stop" } else { "start" },
             &mut self.key_bind,
         ) {
             if !self.recording {
