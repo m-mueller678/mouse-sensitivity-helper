@@ -117,7 +117,14 @@ impl MyEguiApp {
                 ui.label(label);
             });
             row.col(|ui| {
-                f(DragValue::new(v)).ui(ui);
+                if f(DragValue::new(v).clamp_range(0.0..=f64::INFINITY))
+                    .ui(ui)
+                    .dragged()
+                {
+                    if !v.is_finite() {
+                        *v = 1.0;
+                    }
+                }
             });
         });
     }
@@ -191,10 +198,11 @@ impl MyEguiApp {
                 1.0 / 2.54
             };
         let inch = dots / self.configured_dpi;
-        let current_rpi = (self.revolutions as f64 / inch).abs();
+        let current_rpi = dbg!(dbg!(self.revolutions) / dbg!(inch)).abs();
         let rpd = (self.revolutions as f64 / dots).abs();
         let rdp1 = rpd / self.current_sensitivity;
         let adjusted_sensitivity = self.current_sensitivity * (self.target_rpi / current_rpi);
+
         ui.group(|ui| {
             ui.heading("inputs");
             TableBuilder::new(ui)
@@ -228,7 +236,15 @@ impl MyEguiApp {
                         });
                         row.col(|ui| {
                             ui.horizontal(|ui| {
-                                DragValue::new(&mut self.distance_moved).speed(0.02).ui(ui);
+                                if DragValue::new(&mut self.distance_moved)
+                                    .clamp_range(0.0..=f64::INFINITY)
+                                    .speed(0.02)
+                                    .ui(ui)
+                                    .dragged()
+                                    && !self.distance_moved.is_finite()
+                                {
+                                    self.distance_moved = 1.0;
+                                }
                                 ComboBox::new("physical_distance_unit", "")
                                     .selected_text(if self.distnance_moved_is_inch {
                                         "inch"
@@ -252,6 +268,19 @@ impl MyEguiApp {
                     });
                 });
         });
+
+        for x in [
+            &mut self.configured_dpi,
+            &mut self.current_sensitivity,
+            &mut self.distance_moved,
+            &mut self.revolutions,
+            &mut self.target_rpi,
+        ] {
+            if !x.is_finite() {
+                *x = f64::NAN;
+            }
+        }
+
         ui.group(|ui| {
             ui.push_id("outputs", |ui| {
                 ui.heading("outputs");
