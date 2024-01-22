@@ -117,16 +117,30 @@ impl MyEguiApp {
                 ui.label(label);
             });
             row.col(|ui| {
-                if f(DragValue::new(v).clamp_range(0.0..=f64::INFINITY))
-                    .ui(ui)
-                    .dragged()
-                {
+                if f(Self::default_drag_value(v)).ui(ui).dragged() {
                     if !v.is_finite() {
                         *v = 1.0;
                     }
                 }
             });
         });
+    }
+
+    fn default_drag_value(v: &mut f64) -> DragValue {
+        DragValue::new(v)
+            .clamp_range(0.0..=f64::INFINITY)
+            .custom_formatter(|v, d| {
+                if v.is_finite() {
+                    format!("{v:.*}", *d.end())
+                } else {
+                    "---".into()
+                }
+            })
+            .custom_parser(|s| match s.parse::<f64>() {
+                Ok(x) => Some(x),
+                Err(_) => Some(f64::NAN),
+            })
+            .update_while_editing(false)
     }
 
     fn show_value(body: &mut TableBody, name: &str, value: f64) {
@@ -178,18 +192,7 @@ impl MyEguiApp {
         .inner
     }
 
-    fn tab_record(&mut self, ui: &mut Ui) {
-        if MyEguiApp::key_bind_button(
-            ui,
-            if self.recording { "stop" } else { "start" },
-            &mut self.key_bind,
-        ) {
-            if !self.recording {
-                self.x_motion = 0.0;
-                self.abs_motion = 0.0;
-            }
-            self.recording = !self.recording;
-        }
+    fn inputs_outputs(&mut self, ui: &mut Ui) {
         let dots = self.x_motion;
         let physical_distance = self.distance_moved
             * if self.distnance_moved_is_inch {
@@ -198,7 +201,7 @@ impl MyEguiApp {
                 1.0 / 2.54
             };
         let inch = dots / self.configured_dpi;
-        let current_rpi = dbg!(dbg!(self.revolutions) / dbg!(inch)).abs();
+        let current_rpi = (self.revolutions / inch).abs();
         let rpd = (self.revolutions as f64 / dots).abs();
         let rdp1 = rpd / self.current_sensitivity;
         let adjusted_sensitivity = self.current_sensitivity * (self.target_rpi / current_rpi);
@@ -207,7 +210,7 @@ impl MyEguiApp {
             ui.heading("inputs");
             TableBuilder::new(ui)
                 .column(Column::exact(200.0))
-                .column(Column::auto())
+                .column(Column::remainder())
                 .body(|mut body| {
                     Self::input(&mut body, "mouse dpi", &mut self.configured_dpi, |d| {
                         d.speed(10.0)
@@ -236,8 +239,7 @@ impl MyEguiApp {
                         });
                         row.col(|ui| {
                             ui.horizontal(|ui| {
-                                if DragValue::new(&mut self.distance_moved)
-                                    .clamp_range(0.0..=f64::INFINITY)
+                                if Self::default_drag_value(&mut self.distance_moved)
                                     .speed(0.02)
                                     .ui(ui)
                                     .dragged()
@@ -286,8 +288,8 @@ impl MyEguiApp {
                 ui.heading("outputs");
                 TableBuilder::new(ui)
                     .column(Column::exact(200.0))
-                    .column(Column::auto())
-                    .column(Column::auto())
+                    .column(Column::exact(200.0))
+                    .column(Column::remainder())
                     .body(|mut body| {
                         Self::show_value(&mut body, "horizontal motion", dots);
                         Self::show_value(&mut body, "absolute motion", self.abs_motion);
@@ -349,7 +351,7 @@ impl eframe::App for MyEguiApp {
                 self.active_mouse = self.mouse_states.iter().next().cloned();
             }
             ui.horizontal(|ui| {
-                egui::ComboBox::from_label("mouse")
+                ComboBox::from_label("mouse")
                     .selected_text(Self::mouse_combo_box_string(self.active_mouse.as_ref()))
                     .show_ui(ui, |ui| {
                         for dev in self.mouse_states.iter() {
@@ -360,8 +362,20 @@ impl eframe::App for MyEguiApp {
                             );
                         }
                     });
+                ui.label("recording:");
+                if MyEguiApp::key_bind_button(
+                    ui,
+                    if self.recording { "stop" } else { "start" },
+                    &mut self.key_bind,
+                ) {
+                    if !self.recording {
+                        self.x_motion = 0.0;
+                        self.abs_motion = 0.0;
+                    }
+                    self.recording = !self.recording;
+                }
             });
-            self.tab_record(ui);
+            self.inputs_outputs(ui);
         });
     }
 }
