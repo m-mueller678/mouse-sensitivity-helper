@@ -28,7 +28,7 @@ impl LibinputInterface for Interface {
 }
 
 use eframe::egui;
-use egui::{DragValue, Ui, Widget};
+use egui::{Button, DragValue, Ui, Widget};
 
 fn main() {
     let native_options = eframe::NativeOptions::default();
@@ -83,7 +83,7 @@ struct MyEguiApp {
 
     //record
     record_recorder: Recorder,
-    revolutions: usize,
+    revolutions: f64,
     current_sensitivity: f64,
     target_rpi: f64,
 }
@@ -125,7 +125,7 @@ impl MyEguiApp {
             lib_input: input,
             active_mouse: None,
             active_tab: AppTab::Record,
-            configured_dpi: 0.0,
+            configured_dpi: f64::NAN,
             abs_motion: 0.0,
             x_motion: 0.0,
 
@@ -139,9 +139,9 @@ impl MyEguiApp {
                 key_bind: KeyBindState::Unbound,
                 recording: false,
             },
-            target_rpi: 0.0,
-            current_sensitivity: 0.0,
-            revolutions: 3,
+            target_rpi: f64::NAN,
+            current_sensitivity: f64::NAN,
+            revolutions: f64::NAN,
         }
     }
 
@@ -151,6 +151,13 @@ impl MyEguiApp {
         } else {
             "Select Mouse".into()
         }
+    }
+
+    fn input(ui: &mut Ui, label: &str, v: &mut f64, f: impl FnOnce(DragValue) -> DragValue) {
+        ui.horizontal(|ui| {
+            ui.label(label);
+            f(DragValue::new(v)).ui(ui);
+        });
     }
 
     fn key_bind_button(ui: &mut Ui, label: &str, key_bind_state: &mut KeyBindState) -> bool {
@@ -199,42 +206,55 @@ impl MyEguiApp {
     fn show_value(ui: &mut Ui, name: &str, value: f64) {
         ui.horizontal(|ui| {
             ui.label(name);
-            ui.label(format!("{:.3}", value));
-            if ui.button("copy").clicked() {
+            if value.is_nan() {
+                ui.label("missing input");
+            } else {
+                ui.label(format!("{:.3?}", value))
+                    .on_hover_text(format!("{:?}", value));
+            }
+            if ui
+                .add_enabled(!value.is_nan(), Button::new("copy"))
+                .clicked()
+            {
                 ui.ctx().copy_text(format!("{:?}", value));
             }
         });
     }
 
     fn tab_record(&mut self, ui: &mut Ui) {
-        ui.horizontal(|ui| {
-            ui.label("number of revolutions");
-            DragValue::new(&mut self.revolutions).speed(0.05).ui(ui);
-        });
         let dots = self.record_recorder.ui(ui, self.x_motion);
         let inch = dots / self.configured_dpi;
-        Self::show_value(ui, "total motion", dots);
-        Self::show_value(
-            ui,
-            "revolutions per dot",
-            (self.revolutions as f64 / dots).abs(),
-        );
-        Self::show_value(
-            ui,
-            "revolutions per inch",
-            (self.revolutions as f64 / inch).abs(),
-        );
-
+        let current_rpi = (self.revolutions as f64 / inch).abs();
+        let rpd = (self.revolutions as f64 / dots).abs();
+        let rdp1 = rpd / self.current_sensitivity;
+        let adjusted_sensitivity = self.current_sensitivity * (self.target_rpi / current_rpi);
         ui.group(|ui| {
-            ui.label("current sensitivity");
-            DragValue::new(&mut self.current_sensitivity)
-                .speed(0.02)
-                .ui(ui);
-            Self::show_value(
+            ui.label("inputs");
+            Self::input(ui, "mouse dpi", &mut self.configured_dpi, |d| d.speed(10.0));
+            Self::input(
                 ui,
-                "revolutions per dot at sensitivity=1",
-                (self.revolutions as f64 / dots).abs() / self.current_sensitivity,
+                "current sensitivity",
+                &mut self.current_sensitivity,
+                |d| d.speed(0.02),
             );
+            Self::input(ui, "number of revolutions", &mut self.revolutions, |d| {
+                d.speed(0.05).max_decimals(0)
+            });
+            Self::input(
+                ui,
+                "target revolutions per inch",
+                &mut self.target_rpi,
+                |d| d.speed(0.02),
+            );
+        });
+        ui.group(|ui| {
+            ui.label("outputs");
+            Self::show_value(ui, "total motion", dots);
+            Self::show_value(ui, "revolutions per inch", current_rpi);
+            Self::show_value(ui, "revolutions per dot", rpd);
+            Self::show_value(ui, "revolutions per dot at sensitivity=1", rdp1);
+            Self::show_value(ui, "adjusted sensitivity", adjusted_sensitivity);
+            Self::show_value(ui, "sensitivity adjustment", self.target_rpi / current_rpi);
         });
     }
 }
@@ -292,8 +312,6 @@ impl eframe::App for MyEguiApp {
                             );
                         }
                     });
-                ui.label("mouse dpi");
-                DragValue::new(&mut self.configured_dpi).speed(10.0).ui(ui);
                 ui.selectable_value(&mut self.active_tab, AppTab::Basic, "basic");
                 ui.selectable_value(&mut self.active_tab, AppTab::Record, "record");
             });
