@@ -82,10 +82,38 @@ struct MyEguiApp {
     abs_motion_base: f64,
 
     //record
-    key_record_toggle: KeyBindState,
-    record_value: f64,
+    record_recorder: Recorder,
+    revolutions: usize,
+    current_sensitivity: f64,
+    target_rpi: f64,
+}
+
+struct Recorder {
     recording: bool,
-    record_revolutions: usize,
+    value: f64,
+    key_bind: KeyBindState,
+}
+
+impl Recorder {
+    fn ui(&mut self, ui: &mut Ui, acc_motion: f64) -> f64 {
+        if MyEguiApp::key_bind_button(
+            ui,
+            if self.recording { "start" } else { "stop" },
+            &mut self.key_bind,
+        ) {
+            if self.recording {
+                self.value = acc_motion - self.value
+            } else {
+                self.value = acc_motion;
+            }
+            self.recording = !self.recording;
+        }
+        if self.recording {
+            acc_motion - self.value
+        } else {
+            self.value
+        }
+    }
 }
 
 impl MyEguiApp {
@@ -96,7 +124,7 @@ impl MyEguiApp {
             mouse_states: HashSet::new(),
             lib_input: input,
             active_mouse: None,
-            active_tab: AppTab::Basic,
+            active_tab: AppTab::Record,
             configured_dpi: 0.0,
             abs_motion: 0.0,
             x_motion: 0.0,
@@ -106,10 +134,14 @@ impl MyEguiApp {
             x_motion_base: 0.0,
             abs_motion_base: 0.0,
 
-            key_record_toggle: KeyBindState::Unbound,
-            record_value: 0.0,
-            recording: false,
-            record_revolutions: 0,
+            record_recorder: Recorder {
+                value: 0.0,
+                key_bind: KeyBindState::Unbound,
+                recording: false,
+            },
+            target_rpi: 0.0,
+            current_sensitivity: 0.0,
+            revolutions: 3,
         }
     }
 
@@ -164,40 +196,46 @@ impl MyEguiApp {
         });
     }
 
+    fn show_value(ui: &mut Ui, name: &str, value: f64) {
+        ui.horizontal(|ui| {
+            ui.label(name);
+            ui.label(format!("{:.3}", value));
+            if ui.button("copy").clicked() {
+                ui.ctx().copy_text(format!("{:?}", value));
+            }
+        });
+    }
+
     fn tab_record(&mut self, ui: &mut Ui) {
         ui.horizontal(|ui| {
             ui.label("number of revolutions");
-            DragValue::new(&mut self.record_revolutions)
-                .speed(0.05)
-                .ui(ui);
+            DragValue::new(&mut self.revolutions).speed(0.05).ui(ui);
         });
-        if Self::key_bind_button(
-            ui,
-            if self.recording { "start" } else { "stop" },
-            &mut self.key_record_toggle,
-        ) {
-            if self.recording {
-                self.record_value = self.x_motion - self.record_value
-            } else {
-                self.record_value = self.x_motion;
-            }
-            self.recording = !self.recording;
-        }
-        let dots = if self.recording {
-            self.x_motion - self.record_value
-        } else {
-            self.record_value
-        };
+        let dots = self.record_recorder.ui(ui, self.x_motion);
         let inch = dots / self.configured_dpi;
-        ui.label(format!("total motion: {:.5}", dots));
-        ui.label(format!(
-            "revolutions per dot {:5}",
-            self.record_revolutions as f64 / dots
-        ));
-        ui.label(format!(
-            "revolutions per inch {:5}",
-            self.record_revolutions as f64 / inch
-        ));
+        Self::show_value(ui, "total motion", dots);
+        Self::show_value(
+            ui,
+            "revolutions per dot",
+            (self.revolutions as f64 / dots).abs(),
+        );
+        Self::show_value(
+            ui,
+            "revolutions per inch",
+            (self.revolutions as f64 / inch).abs(),
+        );
+
+        ui.group(|ui| {
+            ui.label("current sensitivity");
+            DragValue::new(&mut self.current_sensitivity)
+                .speed(0.02)
+                .ui(ui);
+            Self::show_value(
+                ui,
+                "revolutions per dot at sensitivity=1",
+                (self.revolutions as f64 / dots).abs() / self.current_sensitivity,
+            );
+        });
     }
 }
 
@@ -220,7 +258,7 @@ impl eframe::App for MyEguiApp {
                         for k in [
                             &mut self.key_reset_x,
                             &mut self.key_reset_abs,
-                            &mut self.key_record_toggle,
+                            &mut self.record_recorder.key_bind,
                         ] {
                             if let KeyBindState::Binding = *k {
                                 *k = KeyBindState::Bound(e.key(), false);
