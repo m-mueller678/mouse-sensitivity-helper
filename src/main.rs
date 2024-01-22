@@ -204,7 +204,7 @@ impl MyEguiApp {
                     .selected_text(if self.distnance_moved_is_inch {
                         "inch"
                     } else {
-                        "mm"
+                        "cm"
                     })
                     .show_ui(ui, |ui| {
                         ui.selectable_value(&mut self.distnance_moved_is_inch, false, "cm");
@@ -214,13 +214,14 @@ impl MyEguiApp {
         });
         ui.group(|ui| {
             ui.label("outputs");
-            Self::show_value(ui, "total motion", dots);
+            Self::show_value(ui, "horizontal motion", dots);
+            Self::show_value(ui, "absolute motion", self.abs_motion);
             Self::show_value(ui, "revolutions per inch", current_rpi);
             Self::show_value(ui, "revolutions per dot", rpd);
             Self::show_value(ui, "revolutions per dot at sensitivity=1", rdp1);
             Self::show_value(ui, "adjusted sensitivity", adjusted_sensitivity);
             Self::show_value(ui, "sensitivity adjustment", self.target_rpi / current_rpi);
-            Self::show_value(ui, "computed dpi", dots / physical_distance);
+            Self::show_value(ui, "computed dpi", self.abs_motion / physical_distance);
         });
     }
 }
