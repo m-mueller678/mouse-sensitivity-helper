@@ -12,7 +12,6 @@ struct Interface;
 #[allow(clippy::bad_bit_mask)]
 impl LibinputInterface for Interface {
     fn open_restricted(&mut self, path: &Path, flags: i32) -> Result<OwnedFd, i32> {
-        dbg!(path);
         OpenOptions::new()
             .custom_flags(flags)
             .read((flags & O_RDONLY != 0) | (flags & O_RDWR != 0))
@@ -22,7 +21,6 @@ impl LibinputInterface for Interface {
             .map_err(|err| err.raw_os_error().unwrap())
     }
     fn close_restricted(&mut self, fd: OwnedFd) {
-        dbg!();
         drop(File::from(fd));
     }
 }
