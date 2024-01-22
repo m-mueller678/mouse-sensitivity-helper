@@ -28,7 +28,7 @@ impl LibinputInterface for Interface {
 }
 
 use eframe::egui;
-use egui::{Button, DragValue, Ui, Widget};
+use egui::{Button, ComboBox, DragValue, Ui, Widget};
 
 fn main() {
     let native_options = eframe::NativeOptions::default();
@@ -60,60 +60,20 @@ impl KeyBindState {
     }
 }
 
-#[derive(Eq, PartialEq)]
-enum AppTab {
-    Basic,
-    Record,
-}
-
 struct MyEguiApp {
     mouse_states: HashSet<Device>,
     active_mouse: Option<Device>,
     lib_input: Libinput,
-    active_tab: AppTab,
     configured_dpi: f64,
     x_motion: f64,
     abs_motion: f64,
-
-    //basic
-    key_reset_x: KeyBindState,
-    key_reset_abs: KeyBindState,
-    x_motion_base: f64,
-    abs_motion_base: f64,
-
-    //record
-    record_recorder: Recorder,
+    key_bind: KeyBindState,
+    recording: bool,
     revolutions: f64,
     current_sensitivity: f64,
     target_rpi: f64,
-}
-
-struct Recorder {
-    recording: bool,
-    value: f64,
-    key_bind: KeyBindState,
-}
-
-impl Recorder {
-    fn ui(&mut self, ui: &mut Ui, acc_motion: f64) -> f64 {
-        if MyEguiApp::key_bind_button(
-            ui,
-            if self.recording { "start" } else { "stop" },
-            &mut self.key_bind,
-        ) {
-            if self.recording {
-                self.value = acc_motion - self.value
-            } else {
-                self.value = acc_motion;
-            }
-            self.recording = !self.recording;
-        }
-        if self.recording {
-            acc_motion - self.value
-        } else {
-            self.value
-        }
-    }
+    distance_moved: f64,
+    distnance_moved_is_inch: bool,
 }
 
 impl MyEguiApp {
@@ -124,24 +84,16 @@ impl MyEguiApp {
             mouse_states: HashSet::new(),
             lib_input: input,
             active_mouse: None,
-            active_tab: AppTab::Record,
             configured_dpi: f64::NAN,
             abs_motion: 0.0,
             x_motion: 0.0,
-
-            key_reset_x: KeyBindState::Unbound,
-            key_reset_abs: KeyBindState::Unbound,
-            x_motion_base: 0.0,
-            abs_motion_base: 0.0,
-
-            record_recorder: Recorder {
-                value: 0.0,
-                key_bind: KeyBindState::Unbound,
-                recording: false,
-            },
             target_rpi: f64::NAN,
             current_sensitivity: f64::NAN,
+            key_bind: KeyBindState::Unbound,
+            recording: false,
             revolutions: f64::NAN,
+            distance_moved: f64::NAN,
+            distnance_moved_is_inch: false,
         }
     }
 
@@ -185,24 +137,6 @@ impl MyEguiApp {
         .inner
     }
 
-    fn tab_basic(&mut self, ui: &mut Ui) {
-        ui.horizontal(|ui| {
-            ui.label("x motion");
-            ui.label(format!("{}", self.x_motion - self.x_motion_base));
-            if Self::key_bind_button(ui, "reset", &mut self.key_reset_x) {
-                self.x_motion_base = self.x_motion;
-            }
-        });
-
-        ui.horizontal(|ui| {
-            ui.label("abs motion");
-            ui.label(format!("{}", self.abs_motion - self.abs_motion_base));
-            if Self::key_bind_button(ui, "reset", &mut self.key_reset_abs) {
-                self.abs_motion_base = self.abs_motion_base;
-            }
-        });
-    }
-
     fn show_value(ui: &mut Ui, name: &str, value: f64) {
         ui.horizontal(|ui| {
             ui.label(name);
@@ -222,7 +156,24 @@ impl MyEguiApp {
     }
 
     fn tab_record(&mut self, ui: &mut Ui) {
-        let dots = self.record_recorder.ui(ui, self.x_motion);
+        if MyEguiApp::key_bind_button(
+            ui,
+            if self.recording { "start" } else { "stop" },
+            &mut self.key_bind,
+        ) {
+            if !self.recording {
+                self.x_motion = 0.0;
+                self.abs_motion = 0.0;
+            }
+            self.recording = !self.recording;
+        }
+        let dots = self.x_motion;
+        let physical_distance = self.distance_moved
+            * if self.distnance_moved_is_inch {
+                1.0
+            } else {
+                1.0 / 2.54
+            };
         let inch = dots / self.configured_dpi;
         let current_rpi = (self.revolutions as f64 / inch).abs();
         let rpd = (self.revolutions as f64 / dots).abs();
@@ -246,6 +197,20 @@ impl MyEguiApp {
                 &mut self.target_rpi,
                 |d| d.speed(0.02),
             );
+            ui.horizontal(|ui| {
+                ui.label("physical distance");
+                DragValue::new(&mut self.distance_moved).speed(0.02).ui(ui);
+                ComboBox::new("physical_distance_unit", "")
+                    .selected_text(if self.distnance_moved_is_inch {
+                        "inch"
+                    } else {
+                        "mm"
+                    })
+                    .show_ui(ui, |ui| {
+                        ui.selectable_value(&mut self.distnance_moved_is_inch, false, "cm");
+                        ui.selectable_value(&mut self.distnance_moved_is_inch, true, "inch");
+                    })
+            });
         });
         ui.group(|ui| {
             ui.label("outputs");
@@ -255,6 +220,7 @@ impl MyEguiApp {
             Self::show_value(ui, "revolutions per dot at sensitivity=1", rdp1);
             Self::show_value(ui, "adjusted sensitivity", adjusted_sensitivity);
             Self::show_value(ui, "sensitivity adjustment", self.target_rpi / current_rpi);
+            Self::show_value(ui, "computed dpi", dots / physical_distance);
         });
     }
 }
@@ -267,7 +233,7 @@ impl eframe::App for MyEguiApp {
             match &event {
                 Event::Pointer(PointerEvent::Motion(e)) => {
                     let device = e.device();
-                    if self.active_mouse.as_ref() == Some(&device) {
+                    if self.active_mouse.as_ref() == Some(&device) && self.recording {
                         self.x_motion += e.dx_unaccelerated();
                         self.abs_motion += f64::hypot(e.dx_unaccelerated(), e.dy_unaccelerated());
                     }
@@ -275,11 +241,7 @@ impl eframe::App for MyEguiApp {
                 }
                 Event::Keyboard(e) => {
                     if e.key_state() == KeyState::Pressed {
-                        for k in [
-                            &mut self.key_reset_x,
-                            &mut self.key_reset_abs,
-                            &mut self.record_recorder.key_bind,
-                        ] {
+                        for k in [&mut self.key_bind] {
                             if let KeyBindState::Binding = *k {
                                 *k = KeyBindState::Bound(e.key(), false);
                                 continue 'next_event;
@@ -312,14 +274,8 @@ impl eframe::App for MyEguiApp {
                             );
                         }
                     });
-                ui.selectable_value(&mut self.active_tab, AppTab::Basic, "basic");
-                ui.selectable_value(&mut self.active_tab, AppTab::Record, "record");
             });
-
-            match self.active_tab {
-                AppTab::Basic => self.tab_basic(ui),
-                AppTab::Record => self.tab_record(ui),
-            }
+            self.tab_record(ui);
         });
     }
 }
