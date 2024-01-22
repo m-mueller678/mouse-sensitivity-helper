@@ -2,7 +2,7 @@ use input::event::keyboard::{KeyState, KeyboardEventTrait};
 use input::event::{EventTrait, PointerEvent};
 use input::{Device, Event, Libinput, LibinputInterface};
 use libc::{O_RDONLY, O_RDWR, O_WRONLY};
-use std::collections::HashMap;
+use std::collections::HashSet;
 use std::fs::{File, OpenOptions};
 use std::os::unix::{fs::OpenOptionsExt, io::OwnedFd};
 use std::path::Path;
@@ -28,6 +28,7 @@ impl LibinputInterface for Interface {
 }
 
 use eframe::egui;
+use egui::Ui;
 
 fn main() {
     let native_options = eframe::NativeOptions::default();
@@ -37,12 +38,6 @@ fn main() {
         Box::new(|cc| Box::new(MyEguiApp::new(cc))),
     )
     .unwrap();
-}
-
-#[derive(Default)]
-struct MouseData {
-    x_motion: f64,
-    abs_motion: f64,
 }
 
 #[derive(Eq, PartialEq)]
@@ -65,11 +60,21 @@ impl KeyBindState {
     }
 }
 
+#[derive(Eq, PartialEq)]
+enum AppTab {
+    Basic,
+}
+
 struct MyEguiApp {
-    mouse_states: HashMap<Device, MouseData>,
+    mouse_states: HashSet<Device>,
     active_mouse: Option<Device>,
     lib_input: Libinput,
+    active_tab: AppTab,
+
     key_reset_x: KeyBindState,
+    key_reset_abs: KeyBindState,
+    x_motion: f64,
+    abs_motion: f64,
 }
 
 impl MyEguiApp {
@@ -77,10 +82,15 @@ impl MyEguiApp {
         let mut input = Libinput::new_with_udev(Interface);
         input.udev_assign_seat("seat0").unwrap();
         MyEguiApp {
-            mouse_states: HashMap::new(),
+            mouse_states: HashSet::new(),
             lib_input: input,
             active_mouse: None,
+            active_tab: AppTab::Basic,
+
             key_reset_x: KeyBindState::Unbound,
+            key_reset_abs: KeyBindState::Unbound,
+            x_motion: 0.0,
+            abs_motion: 0.0,
         }
     }
 
@@ -91,6 +101,49 @@ impl MyEguiApp {
             "Select Mouse".into()
         }
     }
+
+    fn key_bind_button(ui: &mut Ui, label: &str, key_bind_state: &mut KeyBindState) -> bool {
+        ui.horizontal(|ui| {
+            let button_triggered = ui.button(label).clicked();
+            match *key_bind_state {
+                KeyBindState::Binding => {
+                    if ui.button("cancel").clicked() {
+                        *key_bind_state = KeyBindState::Unbound
+                    }
+                }
+                KeyBindState::Bound(k, _) => {
+                    if ui.button(format!("key {k}")).clicked() {
+                        *key_bind_state = KeyBindState::Binding
+                    }
+                }
+                KeyBindState::Unbound => {
+                    if ui.button("bind").clicked() {
+                        *key_bind_state = KeyBindState::Binding
+                    }
+                }
+            }
+            button_triggered || key_bind_state.poll_triggered()
+        })
+        .inner
+    }
+
+    fn basic_tab(&mut self, ui: &mut Ui) {
+        ui.horizontal(|ui| {
+            ui.label("x motion");
+            ui.label(format!("{}", self.x_motion));
+            if Self::key_bind_button(ui, "reset", &mut self.key_reset_x) {
+                self.x_motion = 0.0;
+            }
+        });
+
+        ui.horizontal(|ui| {
+            ui.label("abs motion");
+            ui.label(format!("{}", self.abs_motion));
+            if Self::key_bind_button(ui, "reset", &mut self.key_reset_abs) {
+                self.abs_motion = 0.0;
+            }
+        });
+    }
 }
 
 impl eframe::App for MyEguiApp {
@@ -100,13 +153,16 @@ impl eframe::App for MyEguiApp {
         'next_event: for event in &mut self.lib_input {
             match &event {
                 Event::Pointer(PointerEvent::Motion(e)) => {
-                    let s = self.mouse_states.entry(e.device()).or_default();
-                    s.x_motion += e.dx_unaccelerated();
-                    s.abs_motion += f64::hypot(e.dx_unaccelerated(), e.dy_unaccelerated());
+                    let device = e.device();
+                    if self.active_mouse.as_ref() == Some(&device) {
+                        self.x_motion += e.dx_unaccelerated();
+                        self.abs_motion += f64::hypot(e.dx_unaccelerated(), e.dy_unaccelerated());
+                    }
+                    self.mouse_states.insert(device);
                 }
                 Event::Keyboard(e) => {
                     if e.key_state() == KeyState::Pressed {
-                        for k in [&mut self.key_reset_x] {
+                        for k in [&mut self.key_reset_x, &mut self.key_reset_abs] {
                             if let KeyBindState::Binding = *k {
                                 *k = KeyBindState::Bound(e.key(), false);
                                 continue 'next_event;
@@ -125,12 +181,12 @@ impl eframe::App for MyEguiApp {
 
         egui::CentralPanel::default().show(ctx, |ui| {
             if self.active_mouse.is_none() {
-                self.active_mouse = self.mouse_states.keys().next().cloned();
+                self.active_mouse = self.mouse_states.iter().next().cloned();
             }
             egui::ComboBox::from_label("mouse")
                 .selected_text(Self::mouse_combo_box_string(self.active_mouse.as_ref()))
                 .show_ui(ui, |ui| {
-                    for dev in self.mouse_states.keys() {
+                    for dev in self.mouse_states.iter() {
                         ui.selectable_value(
                             &mut self.active_mouse,
                             Some(dev.clone()),
@@ -138,38 +194,12 @@ impl eframe::App for MyEguiApp {
                         );
                     }
                 });
+            ui.horizontal(|ui| {
+                ui.selectable_value(&mut self.active_tab, AppTab::Basic, "basic");
+            });
 
-            if let Some(selected) = &self.active_mouse {
-                let state = self.mouse_states.get_mut(selected).unwrap();
-                ui.label("x motion");
-                ui.label(format!("{}", state.x_motion));
-                ui.label("abs motion");
-                ui.label(format!("{}", state.abs_motion));
-
-                ui.horizontal(|ui| {
-                    ui.label("reset x");
-                    match self.key_reset_x {
-                        KeyBindState::Binding => {
-                            if ui.button("cancel").clicked() {
-                                self.key_reset_x = KeyBindState::Unbound
-                            }
-                        }
-                        KeyBindState::Bound(k, _) => {
-                            if ui.button(format!("key {k}")).clicked() {
-                                self.key_reset_x = KeyBindState::Binding
-                            }
-                        }
-                        KeyBindState::Unbound => {
-                            if ui.button("bind").clicked() {
-                                self.key_reset_x = KeyBindState::Binding
-                            }
-                        }
-                    }
-                });
-
-                if self.key_reset_x.poll_triggered() {
-                    state.x_motion = 0.0;
-                }
+            match self.active_tab {
+                AppTab::Basic => self.basic_tab(ui),
             }
         });
     }
