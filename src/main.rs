@@ -19,15 +19,15 @@ impl LibinputInterface for Interface {
             .open(path)
             .map(|file| file.into())
             .map_err(|err| {
-            let errno = err.raw_os_error().unwrap();
-            if errno == libc::EACCES {
-                eprintln!(
-                    "Permission denied opening {}: add your user to the 'input' group",
-                    path.display()
-                );
-            }
-            errno
-        })
+                let errno = err.raw_os_error().unwrap();
+                if errno == libc::EACCES {
+                    eprintln!(
+                        "Permission denied opening {}: add your user to the 'input' group",
+                        path.display()
+                    );
+                }
+                errno
+            })
     }
     fn close_restricted(&mut self, fd: OwnedFd) {
         drop(File::from(fd));
@@ -133,7 +133,7 @@ impl MyEguiApp {
         });
     }
 
-    fn default_drag_value(v: &mut f64) -> DragValue {
+    fn default_drag_value(v: &mut f64) -> DragValue<'_> {
         DragValue::new(v)
             .clamp_range(0.0..=f64::INFINITY)
             .custom_formatter(|v, d| {
