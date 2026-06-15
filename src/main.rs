@@ -18,7 +18,16 @@ impl LibinputInterface for Interface {
             .write((flags & O_WRONLY != 0) | (flags & O_RDWR != 0))
             .open(path)
             .map(|file| file.into())
-            .map_err(|err| err.raw_os_error().unwrap())
+            .map_err(|err| {
+            let errno = err.raw_os_error().unwrap();
+            if errno == libc::EACCES {
+                eprintln!(
+                    "Permission denied opening {}: add your user to the 'input' group",
+                    path.display()
+                );
+            }
+            errno
+        })
     }
     fn close_restricted(&mut self, fd: OwnedFd) {
         drop(File::from(fd));
