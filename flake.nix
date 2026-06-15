@@ -9,7 +9,10 @@
       let pkgs = import nixpkgs { inherit system; };
       in with pkgs; rec {
         devShell = mkShell rec {
+          nativeBuildInputs = [ pkg-config ];
           buildInputs = [
+            udev
+            libinput
             libxkbcommon
             libGL
 
